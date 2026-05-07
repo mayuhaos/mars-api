@@ -6,24 +6,26 @@ import { ROLE } from '@/lib/roles'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout'
-import {
-  CardStaggerContainer,
-  CardStaggerItem,
-  FadeIn,
-} from '@/components/page-transition'
+import { FadeIn } from '@/components/page-transition'
+import { ModelsChartPreferences } from './components/models/models-chart-preferences'
 import { ModelsFilter } from './components/models/models-filter-dialog'
-import { AnnouncementsPanel } from './components/overview/announcements-panel'
-import { ApiInfoPanel } from './components/overview/api-info-panel'
-import { FAQPanel } from './components/overview/faq-panel'
-import { SummaryCards } from './components/overview/summary-cards'
-import { UptimePanel } from './components/overview/uptime-panel'
+import { OverviewDashboard } from './components/overview/overview-dashboard'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
+import {
+  buildDefaultDashboardFilters,
+  getSavedChartPreferences,
+  saveChartPreferences,
+} from './lib'
 import {
   type DashboardSectionId,
   DASHBOARD_DEFAULT_SECTION,
   DASHBOARD_SECTION_IDS,
 } from './section-registry'
-import { type DashboardFilters, type QuotaDataItem } from './types'
+import {
+  type DashboardChartPreferences,
+  type DashboardFilters,
+  type QuotaDataItem,
+} from './types'
 
 const route = getRouteApi('/_authenticated/dashboard/$section')
 
@@ -107,22 +109,35 @@ export function Dashboard() {
   const activeSection = (params.section ??
     DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
 
-  const [modelFilters, setModelFilters] = useState<DashboardFilters>({})
   const [modelData, setModelData] = useState<QuotaDataItem[]>([])
   const [dataLoading, setDataLoading] = useState(false)
+  const [chartPreferences, setChartPreferences] =
+    useState<DashboardChartPreferences>(() => getSavedChartPreferences())
+  const [modelFilters, setModelFilters] = useState<DashboardFilters>(() =>
+    buildDefaultDashboardFilters(getSavedChartPreferences())
+  )
 
   const handleFilterChange = useCallback((filters: DashboardFilters) => {
     setModelFilters(filters)
   }, [])
 
   const handleResetFilters = useCallback(() => {
-    setModelFilters({})
-  }, [])
+    setModelFilters(buildDefaultDashboardFilters(chartPreferences))
+  }, [chartPreferences])
 
   const handleDataUpdate = useCallback(
     (data: QuotaDataItem[], loading: boolean) => {
       setModelData(data)
       setDataLoading(loading)
+    },
+    []
+  )
+
+  const handleChartPreferencesChange = useCallback(
+    (preferences: DashboardChartPreferences) => {
+      setChartPreferences(preferences)
+      setModelFilters(buildDefaultDashboardFilters(preferences))
+      saveChartPreferences(preferences)
     },
     []
   )
@@ -145,7 +160,22 @@ export function Dashboard() {
     },
     [navigate]
   )
-  const showSectionTabs = activeSection !== 'overview' && visibleSections.length > 1
+  const showSectionTabs =
+    activeSection !== 'overview' && visibleSections.length > 1
+  const modelActions =
+    activeSection === 'models' ? (
+      <>
+        <ModelsChartPreferences
+          preferences={chartPreferences}
+          onPreferencesChange={handleChartPreferencesChange}
+        />
+        <ModelsFilter
+          preferences={chartPreferences}
+          onFilterChange={handleFilterChange}
+          onReset={handleResetFilters}
+        />
+      </>
+    ) : null
 
   return (
     <SectionPageLayout>
@@ -153,46 +183,31 @@ export function Dashboard() {
       <SectionPageLayout.Description>
         {t(meta.descriptionKey)}
       </SectionPageLayout.Description>
-      {activeSection === 'models' && (
-        <SectionPageLayout.Actions>
-          <ModelsFilter
-            onFilterChange={handleFilterChange}
-            onReset={handleResetFilters}
-          />
-        </SectionPageLayout.Actions>
-      )}
       <SectionPageLayout.Content>
-        <div className='space-y-4'>
-          {showSectionTabs && (
-            <Tabs value={activeSection} onValueChange={handleSectionChange}>
-              <TabsList className='h-auto max-w-full flex-wrap justify-start'>
-                {visibleSections.map((section) => (
-                  <TabsTrigger key={section} value={section}>
-                    {t(SECTION_META[section].titleKey)}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
+        <div className='space-y-3 sm:space-y-4'>
+          {activeSection !== 'overview' && (
+            <div className='flex flex-wrap items-center justify-between gap-1.5 sm:gap-2'>
+              {showSectionTabs ? (
+                <Tabs value={activeSection} onValueChange={handleSectionChange}>
+                  <TabsList className='h-auto max-w-full flex-wrap justify-start'>
+                    {visibleSections.map((section) => (
+                      <TabsTrigger key={section} value={section}>
+                        {t(SECTION_META[section].titleKey)}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              ) : (
+                <div />
+              )}
+              {modelActions != null && (
+                <div className='flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2'>
+                  {modelActions}
+                </div>
+              )}
+            </div>
           )}
-          {activeSection === 'overview' && (
-            <>
-              <SummaryCards />
-              <CardStaggerContainer className='grid grid-cols-1 gap-4 lg:grid-cols-2'>
-                <CardStaggerItem>
-                  <ApiInfoPanel />
-                </CardStaggerItem>
-                <CardStaggerItem>
-                  <AnnouncementsPanel />
-                </CardStaggerItem>
-                <CardStaggerItem>
-                  <FAQPanel />
-                </CardStaggerItem>
-                <CardStaggerItem>
-                  <UptimePanel />
-                </CardStaggerItem>
-              </CardStaggerContainer>
-            </>
-          )}
+          {activeSection === 'overview' && <OverviewDashboard />}
           {activeSection === 'models' && (
             <>
               <FadeIn>
@@ -208,6 +223,9 @@ export function Dashboard() {
                   <LazyConsumptionDistributionChart
                     data={modelData}
                     loading={dataLoading}
+                    defaultChartType={
+                      chartPreferences.consumptionDistributionChart
+                    }
                     timeGranularity={
                       modelFilters.time_granularity || DEFAULT_TIME_GRANULARITY
                     }
@@ -219,6 +237,7 @@ export function Dashboard() {
                   <LazyModelCharts
                     data={modelData}
                     loading={dataLoading}
+                    defaultChartTab={chartPreferences.modelAnalyticsChart}
                     timeGranularity={
                       modelFilters.time_granularity || DEFAULT_TIME_GRANULARITY
                     }
